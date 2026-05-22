@@ -950,8 +950,23 @@ def edit_trainer_name(player, new_name):
         set_attr(player, 'name', new_name)
     print(f"  [OK] Nombre cambiado: '{old_name}' → '{new_name}'")
     return True
- 
- 
+
+
+def edit_player_gender(player, new_gender):
+    """Cambia el género del personaje jugador (0=Masculino, 1=Femenino)."""
+    if player is None:
+        print("  [ERR] No se encontró el jugador")
+        return False
+    if new_gender not in (0, 1):
+        print("  [ERR] Género inválido. Usa 0 (Masculino) o 1 (Femenino)")
+        return False
+    old = get_attr(player, 'gender')
+    set_attr(player, 'gender', new_gender)
+    labels = {0: 'Masculino', 1: 'Femenino'}
+    print(f"  [OK] Género del personaje: {labels.get(old, old)} → {labels[new_gender]}")
+    return True
+
+
 # ─── PBS Parser y creación de Pokémon ────────────────────────────────────────
  
 PBS_PATH = os.path.join(SCRIPT_DIR, 'PBS', 'pokemon.txt')
@@ -1070,6 +1085,21 @@ BANNED_POKEMON = {
     # Baneados especiales
     'SLAKING',
 }
+
+# ─── Pool de ítems competitivos para el equipo de torneo ─────────────────────
+TOURNAMENT_ITEMS = [
+    # Held items ofensivos
+    'CHOICEBAND', 'CHOICESPECS', 'CHOICESCARF', 'LIFEORB',
+    'EXPERTBELT', 'WISEGLASSES', 'MUSCLEBAND',
+    # Supervivencia
+    'FOCUSSASH', 'ROCKYHELMET', 'EVIOLITE',
+    # Recuperación
+    'LEFTOVERS', 'BLACKSLUDGE', 'SHELLBELL',
+    # Bayas
+    'LUMBERRY', 'SITRUSBERRY', 'ORANBERRY',
+    # Otros útiles en combate
+    'ASSAULTVEST', 'AIRBALLOON', 'SCOPELENS', 'LOADEDDICE',
+]
 
 def calc_stat(base, level, iv=31, ev=0, nature_mod=1.0, is_hp=False):
     ev_contribution = ev // 4
@@ -1429,9 +1459,8 @@ def generate_tournament_team(party, player_obj):
         print(f"[ERR] Solo hay {len(eligible)} especies elegibles (se necesitan 6)")
         return False
 
-    # Pool de ítems: todos los del ITEM_POCKET_MAP, sin repetir en el equipo
-    item_pool = [item for pocket in ITEM_POCKET_MAP.values() for item in pocket]
-    chosen_items = random.sample(item_pool, min(6, len(item_pool)))
+    # Pool de ítems competitivos, sin repetir en el equipo
+    chosen_items = random.sample(TOURNAMENT_ITEMS, min(6, len(TOURNAMENT_ITEMS)))
 
     chosen = random.sample(eligible, 6)
     new_party = []
@@ -1607,6 +1636,7 @@ def main():
     print("  9. Randomizar stats/habilidad de un Pokémon")
     print(" 10. Generar equipo de torneo  (6 Pokémon aleatorios, con ítems, sin baneados)")
     print(" 11. Cambiar nombre del entrenador")
+    print(" 12. Cambiar género del personaje  (0=Masculino, 1=Femenino)")
     print("  0. Guardar y salir")
     print("  Q. Salir sin guardar")
  
@@ -1782,7 +1812,19 @@ def main():
                     modified = True
             else:
                 print("  [ERR] El nombre no puede estar vacío")
- 
+
+        elif choice == '12':
+            current_gender = get_attr(player, 'gender') if player else '?'
+            labels = {0: 'Masculino', 1: 'Femenino'}
+            print(f"  Género actual: {labels.get(current_gender, current_gender)}")
+            val = input("  Nuevo género (0=Masculino, 1=Femenino): ").strip()
+            try:
+                ok = edit_player_gender(player, int(val))
+                if ok:
+                    modified = True
+            except (ValueError, TypeError):
+                print("  Valor inválido")
+
         else:
             print("Opción no válida")
  
