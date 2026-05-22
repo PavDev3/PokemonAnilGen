@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Pokemon Anil - Editor de Partida Guardada
 Soporta Pokemon Essentials v21+ (Ruby Marshal 4.8)
@@ -9,57 +8,57 @@ import copy
 import os
 import shutil
 from datetime import datetime
-
+ 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SAVES_IN_DIR  = os.path.join(SCRIPT_DIR, 'saves')
 SAVES_OUT_DIR = os.path.join(SCRIPT_DIR, 'savesGen')
-
+ 
 # ─── Ruby Marshal Parser ────────────────────────────────────────────────────
-
+ 
 class RubyHash:
     """Hash de Ruby que soporta cualquier tipo de clave."""
     def __init__(self):
         self.pairs = []  # lista de [key, value]
         self._default = None
-
+ 
     def __setitem__(self, key, value):
         for pair in self.pairs:
             if pair[0] == key:
                 pair[1] = value
                 return
         self.pairs.append([key, value])
-
+ 
     def __getitem__(self, key):
         for pair in self.pairs:
             if pair[0] == key:
                 return pair[1]
         raise KeyError(key)
-
+ 
     def __contains__(self, key):
         return any(pair[0] == key for pair in self.pairs)
-
+ 
     def get(self, key, default=None):
         for pair in self.pairs:
             if pair[0] == key:
                 return pair[1]
         return default
-
+ 
     def keys(self):
         return [p[0] for p in self.pairs]
-
+ 
     def values(self):
         return [p[1] for p in self.pairs]
-
+ 
     def items(self):
         return [(p[0], p[1]) for p in self.pairs]
-
+ 
     def __len__(self):
         return len(self.pairs)
-
+ 
     def __repr__(self):
         return f"RubyHash({self.pairs!r})"
-
-
+ 
+ 
 class RubyObject:
     def __init__(self, class_name, attributes=None):
         self.class_name = class_name
@@ -67,55 +66,55 @@ class RubyObject:
         self._ruby_type = 'o'       # 'o', 'u', 'U', 'C', 'S'
         self._ivar_wrapped = False  # True if originally wrapped in 'I'
         self._ivars = []            # [(key, value)] pairs from the 'I' wrapper
-
+ 
     def __repr__(self):
         return f"<{self.class_name} {self.attributes}>"
-
+ 
     def get(self, key, default=None):
         return self.attributes.get(f"@{key}", self.attributes.get(key, default))
-
+ 
     def set(self, key, value):
         k = f"@{key}" if not key.startswith("@") else key
         self.attributes[k] = value
-
-
+ 
+ 
 class RubySymbol(str):
     pass
-
-
+ 
+ 
 class _EncodedString(str):
     """str subclass that preserves original raw bytes and IVAR encoding info for round-trip fidelity."""
     __slots__ = ('_raw_bytes', '_ivars')
-
+ 
     def __new__(cls, value, raw_bytes=None, ivars=None):
         inst = super().__new__(cls, value)
         inst._raw_bytes = raw_bytes
         inst._ivars = ivars if ivars is not None else []
         return inst
-
-
+ 
+ 
 class _EncodedFloat(float):
     """float subclass that preserves the original Marshal string representation for round-trip fidelity."""
     __slots__ = ('_raw_str',)
-
+ 
     def __new__(cls, value, raw_str=None):
         inst = super().__new__(cls, value)
         inst._raw_str = raw_str
         return inst
-
-
+ 
+ 
 class MarshalReader:
     def __init__(self, data: bytes):
         self.buf = io.BytesIO(data)
         self.symbols = []   # symbol table
         self.objects = []   # object table (links)
-
+ 
     def read_byte(self):
         return self.buf.read(1)[0]
-
+ 
     def read_bytes(self, n):
         return self.buf.read(n)
-
+ 
     def read_int(self):
         b = self.read_byte()
         if b == 0:
@@ -167,18 +166,18 @@ class MarshalReader:
                 return v
             else:
                 return b + 5
-
+ 
     def read_string_raw(self):
         length = self.read_int()
         return self.buf.read(length)
-
+ 
     def read_symbol(self):
         length = self.read_int()
         s = self.buf.read(length).decode("utf-8", errors="replace")
         sym = RubySymbol(s)
         self.symbols.append(sym)
         return sym
-
+ 
     def _decode_bytes(self, raw, enc):
         if enc is True:
             try: return raw.decode('utf-8')
@@ -188,10 +187,10 @@ class MarshalReader:
             except: return raw.decode('latin-1')
         try: return raw.decode('utf-8')
         except: return raw.decode('latin-1')
-
+ 
     def read(self):
         type_byte = self.read_byte()
-
+ 
         if type_byte == ord('0'):   # nil
             return None
         elif type_byte == ord('T'): # true
@@ -404,7 +403,7 @@ class MarshalReader:
             return obj
         else:
             raise ValueError(f"Unknown type byte: 0x{type_byte:02X} at position {self.buf.tell()-1}")
-
+ 
     def read_bignum(self):
         sign = self.read_byte()  # ord('+') or ord('-')
         n = self.read_int()
@@ -415,7 +414,7 @@ class MarshalReader:
         if sign == ord('-'):
             value = -value
         return value
-
+ 
     def read_float(self):
         raw = self.read_string_raw()
         s = raw.decode('ascii')
@@ -426,49 +425,49 @@ class MarshalReader:
         elif s in ('nan', 'NaN'):
             return float('nan')
         return _EncodedFloat(float(s), s)
-
-
+ 
+ 
 def _ruby_float_str(f):
     """Format a float the way Ruby's Marshal does (shortest round-trip representation)."""
     if f == float('inf'):  return 'inf'
     if f == float('-inf'): return '-inf'
     if f != f:             return 'nan'
-
+ 
     # repr() uses the same shortest-unique algorithm as modern Ruby (Grisu/Ryu)
     s = repr(f)
-
+ 
     # Ruby writes "0" not "0.0" for zero
     if s == '0.0':   return '0'
     if s == '-0.0':  return '-0'
-
+ 
     # Fix exponent format: Python "1.5e+10" → Ruby "1.5e10"; "1.5e-10" stays
     if 'e' in s:
         mantissa, _, exp_raw = s.partition('e')
         sign = '-' if exp_raw.startswith('-') else ''
         digits = exp_raw.lstrip('+-').lstrip('0') or '0'
         return mantissa + 'e' + sign + digits
-
+ 
     return s
-
-
+ 
+ 
 class MarshalWriter:
     def __init__(self):
         self.buf = io.BytesIO()
         self.symbols = []
         self.objects = {}  # id(obj) -> index in reader's objects table
         self._idx = 0       # sequential counter matching reader's append order
-
+ 
     def _track(self, obj_id):
         """Assign the next sequential index to this object."""
         self.objects[obj_id] = self._idx
         self._idx += 1
-
+ 
     def write_byte(self, b):
         self.buf.write(bytes([b & 0xFF]))
-
+ 
     def write_bytes(self, b):
         self.buf.write(b)
-
+ 
     def write_int(self, n):
         if n == 0:
             self.write_byte(0)
@@ -494,7 +493,7 @@ class MarshalWriter:
         self.write_byte(4 if n > 0 else 0xFC)
         self.write_byte(n & 0xFF); self.write_byte((n >> 8) & 0xFF)
         self.write_byte((n >> 16) & 0xFF); self.write_byte((n >> 24) & 0xFF)
-
+ 
     def write(self, obj):
         # ── Untracked immediate types ──
         if obj is None:
@@ -505,7 +504,7 @@ class MarshalWriter:
             self.write_byte(ord('F')); return
         if isinstance(obj, bool):
             return  # already handled
-
+ 
         # ── Symbols (own table, not objects table) ──
         if isinstance(obj, RubySymbol):
             if obj in self.symbols:
@@ -518,32 +517,32 @@ class MarshalWriter:
                 self.write_bytes(encoded)
                 self.symbols.append(obj)
             return
-
+ 
         # ── Fixnums (not tracked in objects table) ──
         if isinstance(obj, int) and -0x40000000 <= obj <= 0x3FFFFFFF:
             self.write_byte(ord('i'))
             self.write_int(obj)
             return
-
+ 
         # ── All remaining types ARE tracked — check for already-written link ──
         obj_id = id(obj)
         if obj_id in self.objects:
             self.write_byte(ord('@'))
             self.write_int(self.objects[obj_id])
             return
-
+ 
         # ── Bignum (tracked) ──
         if isinstance(obj, int):
             self._track(obj_id)
             self._write_bignum_data(obj)
             return
-
+ 
         # ── Float (tracked) ──
         if isinstance(obj, float):
             self._track(obj_id)
             self._write_float_data(obj)
             return
-
+ 
         # ── String → I"..." (tracked) ──
         if isinstance(obj, str):
             if isinstance(obj, _EncodedString) and obj._raw_bytes is not None:
@@ -570,7 +569,7 @@ class MarshalWriter:
                 self.write(RubySymbol('E'))
                 self.write(True)
             return
-
+ 
         # ── Bytes → raw string (tracked) ──
         if isinstance(obj, bytes):
             self.write_byte(ord('"'))
@@ -578,7 +577,7 @@ class MarshalWriter:
             self.write_bytes(obj)
             self._track(obj_id)
             return
-
+ 
         # ── List (tracked before children) ──
         if isinstance(obj, list):
             self.write_byte(ord('['))
@@ -587,7 +586,7 @@ class MarshalWriter:
             for item in obj:
                 self.write(item)
             return
-
+ 
         # ── Hash / RubyHash (tracked before children) ──
         if isinstance(obj, (dict, RubyHash)):
             has_default = isinstance(obj, RubyHash) and obj._default is not None
@@ -600,13 +599,13 @@ class MarshalWriter:
             if has_default:
                 self.write(obj._default)
             return
-
+ 
         # ── RubyObject (tracked before attributes) ──
         if isinstance(obj, RubyObject):
             rtype = getattr(obj, '_ruby_type', 'o')
             ivar_wrapped = getattr(obj, '_ivar_wrapped', False)
             ivars = getattr(obj, '_ivars', [])
-
+ 
             if rtype == 'u':
                 data = obj.attributes.get('__data__', b'')
                 if ivar_wrapped:
@@ -663,9 +662,9 @@ class MarshalWriter:
                     self.write(RubySymbol(k))
                     self.write(v)
             return
-
+ 
         raise TypeError(f"Cannot serialize {type(obj)}: {obj!r}")
-
+ 
     def _write_bignum_data(self, n):
         self.write_byte(ord('l'))
         if n >= 0:
@@ -682,7 +681,7 @@ class MarshalWriter:
             digits.append(0)
         self.write_int(len(digits) // 2)
         self.write_bytes(bytes(digits))
-
+ 
     def _write_float_data(self, f):
         self.write_byte(ord('f'))
         if isinstance(f, _EncodedFloat) and f._raw_str is not None:
@@ -691,27 +690,27 @@ class MarshalWriter:
             s = _ruby_float_str(f).encode('ascii')
         self.write_int(len(s))
         self.write_bytes(s)
-
+ 
     def get_bytes(self):
         return b'\x04\x08' + self.buf.getvalue()
-
-
+ 
+ 
 def load_save(path):
     with open(path, 'rb') as f:
         data = f.read()
     assert data[:2] == b'\x04\x08', "No es un archivo Ruby Marshal válido"
     reader = MarshalReader(data[2:])
     return reader.read()
-
-
+ 
+ 
 def dump_save(obj, path):
     writer = MarshalWriter()
     writer.write(obj)
     return writer.get_bytes()
-
-
+ 
+ 
 # ─── Helper para navegar los datos ──────────────────────────────────────────
-
+ 
 def get_attr(obj, key):
     """Obtiene atributo de RubyObject (con o sin @)."""
     if isinstance(obj, RubyObject):
@@ -720,13 +719,13 @@ def get_attr(obj, key):
             if full in obj.attributes:
                 return obj.attributes[full]
     return None
-
+ 
 def set_attr(obj, key, value):
     """Fija atributo de RubyObject."""
     if isinstance(obj, RubyObject):
         full = key if key.startswith('@') else f'@{key}'
         obj.attributes[full] = value
-
+ 
 def find_key(d, *keys):
     """Busca una clave en RubyHash o dict, probando variantes."""
     for k in keys:
@@ -736,7 +735,7 @@ def find_key(d, *keys):
         if k in d:
             return d[k]
     return None
-
+ 
 def find_player(save_data):
     if isinstance(save_data, (dict, RubyHash)):
         for k in ('player', 'trainer'):
@@ -744,7 +743,7 @@ def find_player(save_data):
             if v is not None:
                 return v
     return None
-
+ 
 def find_bag(save_data):
     if isinstance(save_data, (dict, RubyHash)):
         for k in ('bag', 'storage', 'PokemonBag'):
@@ -752,7 +751,7 @@ def find_bag(save_data):
             if v is not None:
                 return v
     return None
-
+ 
 def find_party(save_data):
     # In PE v21+, party is inside the player object
     player = find_player(save_data)
@@ -767,10 +766,10 @@ def find_party(save_data):
             if isinstance(v, list):
                 return v
     return None
-
-
+ 
+ 
 # ─── Mostrar estado actual ───────────────────────────────────────────────────
-
+ 
 def show_player_info(player):
     print("\n=== JUGADOR ===")
     name = get_attr(player, 'name') or get_attr(player, 'playername') or '?'
@@ -791,8 +790,8 @@ def show_player_info(player):
         for k, v in player.attributes.items():
             if isinstance(v, (int, float, str, bool)) or v is None:
                 print(f"    {k} = {v!r}")
-
-
+ 
+ 
 def show_party(party):
     print("\n=== EQUIPO POKEMON ===")
     if not party:
@@ -823,8 +822,8 @@ def show_party(party):
                 print(f"       EVs: {ev_vals}")
         else:
             print(f"  [{i}] {poke!r}")
-
-
+ 
+ 
 def show_bag(bag):
     print("\n=== BOLSA (items) ===")
     if bag is None:
@@ -840,14 +839,14 @@ def show_bag(bag):
                     print(f"    ... ({len(v)-5} más)")
             elif isinstance(v, dict):
                 print(f"  {k}: dict con {len(v)} ítems")
-
-
+ 
+ 
 # ─── Edición ─────────────────────────────────────────────────────────────────
-
+ 
 def edit_money(player, amount):
     set_attr(player, 'money', amount)
     print(f"  [OK] Dinero fijado a ${amount:,}")
-
+ 
 ITEM_POCKET_MAP = {
     # pocket 1 = items de batalla/uso general
     1: ['POTION', 'SUPERPOTION', 'HYPERPOTION', 'MAXPOTION', 'FULLRESTORE', 'REVIVE', 'MAXREVIVE',
@@ -867,7 +866,7 @@ ITEM_POCKET_MAP = {
     ],
     # Add more as needed
 }
-
+ 
 def edit_items(bag, item_name, quantity):
     """Agrega o modifica un ítem en la bolsa. Pocket 1 = items, pocket 2 = pokeballs."""
     if bag is None:
@@ -877,12 +876,12 @@ def edit_items(bag, item_name, quantity):
     if not isinstance(bag, RubyObject):
         print("  [ERR] Formato de bolsa no reconocido")
         return
-
+ 
     pockets = bag.attributes.get('@pockets')
     if not isinstance(pockets, list):
         print("  [ERR] No se encontraron los pockets de la bolsa")
         return
-
+ 
     # Search in all pockets first
     for pocket in pockets:
         if not isinstance(pocket, list):
@@ -893,14 +892,14 @@ def edit_items(bag, item_name, quantity):
                     entry[1] = quantity
                     print(f"  [OK] {item_name} actualizado a x{quantity}")
                     return
-
+ 
     # Not found - determine pocket (1 for balls, else pocket 0)
     pocket_idx = 1  # default: general items pocket
     for pi, names in ITEM_POCKET_MAP.items():
         if item_key in names:
             pocket_idx = pi
             break
-
+ 
     item_sym = RubySymbol(item_key)
     if pocket_idx < len(pockets) and isinstance(pockets[pocket_idx], list):
         pockets[pocket_idx].append([item_sym, quantity])
@@ -912,7 +911,7 @@ def edit_items(bag, item_name, quantity):
                 print(f"  [OK] {item_name} x{quantity} agregado")
                 return
         print(f"  [ERR] No se pudo agregar {item_name}")
-
+ 
 def edit_pokemon_level(party, index, new_level):
     if index >= len(party):
         print(f"  [ERR] No hay Pokémon en la posición {index}")
@@ -922,7 +921,7 @@ def edit_pokemon_level(party, index, new_level):
         set_attr(poke, 'level', new_level)
         # Actualizar exp también si existe
         print(f"  [OK] Nivel del Pokémon [{index}] fijado a {new_level}")
-
+ 
 def edit_badges(player, num_badges):
     badges = get_attr(player, 'badges')
     if isinstance(badges, list):
@@ -934,18 +933,35 @@ def edit_badges(player, num_badges):
         new_badges = [i < num_badges for i in range(8)]
         set_attr(player, 'badges', new_badges)
         print(f"  [OK] {num_badges} medallas activadas")
-
-
+ 
+def edit_trainer_name(player, new_name):
+    """Cambia el nombre del entrenador."""
+    if player is None:
+        print("  [ERR] No se encontró el jugador")
+        return False
+    old_name = get_attr(player, 'name') or get_attr(player, 'playername') or '?'
+    # Intentar ambas claves posibles
+    if '@name' in player.attributes:
+        set_attr(player, 'name', new_name)
+    elif '@playername' in player.attributes:
+        set_attr(player, 'playername', new_name)
+    else:
+        # Si no existe ninguna, crear @name
+        set_attr(player, 'name', new_name)
+    print(f"  [OK] Nombre cambiado: '{old_name}' → '{new_name}'")
+    return True
+ 
+ 
 # ─── PBS Parser y creación de Pokémon ────────────────────────────────────────
-
+ 
 PBS_PATH = os.path.join(SCRIPT_DIR, 'PBS', 'pokemon.txt')
 MOVES_PBS_PATH = os.path.join(SCRIPT_DIR, 'PBS', 'moves.txt')
-
+ 
 # PBS stat order: HP, ATK, DEF, SPD, SPATK, SPDEF
 _PBS_STAT_ORDER = ['HP', 'ATTACK', 'DEFENSE', 'SPEED', 'SPECIAL_ATTACK', 'SPECIAL_DEFENSE']
-
+ 
 _PBS_CACHE = {}
-
+ 
 def _load_pbs(path):
     if path in _PBS_CACHE:
         return _PBS_CACHE[path]
@@ -972,16 +988,16 @@ def _load_pbs(path):
         pass
     _PBS_CACHE[path] = data
     return data
-
+ 
 def get_all_species():
     """Lista todas las especies disponibles en el PBS."""
     db = _load_pbs(PBS_PATH)
     return sorted(db.keys())
-
+ 
 def get_pokemon_data(species):
     db = _load_pbs(PBS_PATH)
     return db.get(species.upper())
-
+ 
 def get_move_pp(move_id):
     """Retorna el PP base de un movimiento."""
     db = _load_pbs(MOVES_PBS_PATH)
@@ -990,7 +1006,7 @@ def get_move_pp(move_id):
         return int(entry.get('TotalPP', entry.get('PP', '20')))
     except ValueError:
         return 20
-
+ 
 # Natures: (boosted_stat, reduced_stat) usando claves de @iv/@ev
 _NATURES = {
     'HARDY': (None, None), 'DOCILE': (None, None), 'BASHFUL': (None, None),
@@ -1006,13 +1022,13 @@ _NATURES = {
     'CALM': ('SPECIAL_DEFENSE', 'ATTACK'), 'GENTLE': ('SPECIAL_DEFENSE', 'DEFENSE'),
     'SASSY': ('SPECIAL_DEFENSE', 'SPEED'), 'CAREFUL': ('SPECIAL_DEFENSE', 'SPECIAL_ATTACK'),
 }
-
+ 
 def calc_stat(base, level, iv=31, ev=0, nature_mod=1.0, is_hp=False):
     ev_contribution = ev // 4
     if is_hp:
         return (2 * base + iv + ev_contribution) * level // 100 + level + 10
     return int(((2 * base + iv + ev_contribution) * level // 100 + 5) * nature_mod)
-
+ 
 def calc_exp(growth_rate, level):
     n = level
     gr = growth_rate.upper()
@@ -1027,7 +1043,7 @@ def calc_exp(growth_rate, level):
         return 5 * n**3 // 4
     else:
         return n**3  # fallback
-
+ 
 def get_level_moves(species_data, level):
     """Retorna hasta 4 movimientos aprendibles al llegar al nivel dado."""
     moves_str = species_data.get('Moves', '')
@@ -1048,7 +1064,7 @@ def get_level_moves(species_data, level):
         except (ValueError, IndexError):
             i += 1
     return learned[-4:]  # keep last 4
-
+ 
 def make_move(move_id):
     m = RubyObject('Pokemon::Move')
     pp = get_move_pp(move_id)
@@ -1056,32 +1072,32 @@ def make_move(move_id):
     m.attributes['@ppup'] = 0
     m.attributes['@pp']   = pp
     return m
-
+ 
 def make_pokemon(species, level, nature='HARDY', shiny=False, ivs_all31=True,
                  player_obj=None, ability=None, move_ids=None, evs=None):
     """Crea un objeto Pokemon completo listo para agregar al equipo."""
     import random, time
-
+ 
     species = species.upper()
     nature  = nature.upper()
     pdata   = get_pokemon_data(species)
-
+ 
     if pdata is None:
         raise ValueError(f"Especie '{species}' no encontrada en PBS")
     if nature not in _NATURES:
         raise ValueError(f"Naturaleza '{nature}' inválida")
-
+ 
     # Base stats (PBS order: HP, ATK, DEF, SPD, SPATK, SPDEF)
     raw_stats = [int(x.strip()) for x in pdata.get('BaseStats', '50,50,50,50,50,50').split(',')]
     if len(raw_stats) < 6:
         raw_stats += [50] * (6 - len(raw_stats))
     base = dict(zip(_PBS_STAT_ORDER, raw_stats))
-
+ 
     # IVs — keys must be RubySymbol (Ruby serializes them as :HP etc.)
     iv_hash = RubyHash()
     for stat in _PBS_STAT_ORDER:
         iv_hash[RubySymbol(stat)] = 31 if ivs_all31 else random.randint(0, 31)
-
+ 
     # EVs — usar los proporcionados o todos en 0
     if evs is not None:
         ev_hash = evs
@@ -1089,14 +1105,14 @@ def make_pokemon(species, level, nature='HARDY', shiny=False, ivs_all31=True,
         ev_hash = RubyHash()
         for stat in _PBS_STAT_ORDER:
             ev_hash[RubySymbol(stat)] = 0
-
+ 
     # Nature modifier
     boost, reduce = _NATURES[nature]
     def nat_mod(stat):
         if stat == boost:   return 1.1
         if stat == reduce:  return 0.9
         return 1.0
-
+ 
     # Calculate stats (including EVs)
     def ev(stat): return ev_hash.get(RubySymbol(stat), ev_hash.get(stat, 0))
     hp    = calc_stat(base['HP'],              level, iv_hash[RubySymbol('HP')],              ev('HP'),              1.0, is_hp=True)
@@ -1105,25 +1121,25 @@ def make_pokemon(species, level, nature='HARDY', shiny=False, ivs_all31=True,
     spatk = calc_stat(base['SPECIAL_ATTACK'],  level, iv_hash[RubySymbol('SPECIAL_ATTACK')],  ev('SPECIAL_ATTACK'),  nat_mod('SPECIAL_ATTACK'))
     spdef = calc_stat(base['SPECIAL_DEFENSE'], level, iv_hash[RubySymbol('SPECIAL_DEFENSE')], ev('SPECIAL_DEFENSE'), nat_mod('SPECIAL_DEFENSE'))
     speed = calc_stat(base['SPEED'],           level, iv_hash[RubySymbol('SPEED')],           ev('SPEED'),           nat_mod('SPEED'))
-
+ 
     # Exp
     growth = pdata.get('GrowthRate', 'Medium')
     exp = calc_exp(growth, level)
-
+ 
     # Moves — usar los proporcionados o los del nivel
     if move_ids is None:
         move_ids = get_level_moves(pdata, level)
         if not move_ids:
             move_ids = ['TACKLE']
     moves_list = [make_move(mid) for mid in move_ids]
-
+ 
     # Habilidad — usar la proporcionada o la primera del PBS
     if ability:
         ability_sym = RubySymbol(ability.strip().upper())
     else:
         abilities = pdata.get('Abilities', '').split(',')
         ability_sym = RubySymbol(abilities[0].strip().upper()) if abilities and abilities[0].strip() else None
-
+ 
     # Owner
     if player_obj:
         owner = RubyObject('Pokemon::Owner')
@@ -1137,14 +1153,14 @@ def make_pokemon(species, level, nature='HARDY', shiny=False, ivs_all31=True,
         owner.attributes['@name']     = 'Player'
         owner.attributes['@gender']   = 0
         owner.attributes['@language'] = 2
-
+ 
     legacy = RubyHash()
     for k in ('party_time','item_count','move_count','egg_count','trade_count',
               'defeated_count','fainted_count','supereff_count','critical_count',
               'retreat_count','trainer_count','leader_count','legend_count',
               'champion_count','loss_count'):
         legacy[RubySymbol(k)] = 0
-
+ 
     poke = RubyObject('Pokemon')
     a = poke.attributes
     a['@randomized']       = False
@@ -1208,10 +1224,10 @@ def make_pokemon(species, level, nature='HARDY', shiny=False, ivs_all31=True,
     a['@last_update_time'] = 0.0
     a['@legacy_data']      = legacy
     a['@super_shiny']      = False
-
+ 
     return poke
-
-
+ 
+ 
 def add_pokemon_to_party(party, player, species, level, nature='HARDY',
                          shiny=False, ivs_all31=True):
     if len(party) >= 6:
@@ -1229,28 +1245,28 @@ def add_pokemon_to_party(party, player, species, level, nature='HARDY',
     hp = get_attr(poke, 'totalhp')
     print(f"  [OK] {s}{sp} Nv.{lv} HP:{hp} agregado al equipo ({len(party)}/6)")
     return True
-
-
+ 
+ 
 def randomize_pokemon_stats(poke, player=None):
     """Randomiza IVs, naturaleza, habilidad y recalcula stats de un Pokémon."""
     import random
     if not isinstance(poke, RubyObject):
         return
-
+ 
     species  = str(get_attr(poke, 'species') or '')
     level    = get_attr(poke, 'level') or 50
     pdata    = get_pokemon_data(species)
-
+ 
     # Random nature
     new_nature = RubySymbol(random.choice(list(_NATURES.keys())))
     set_attr(poke, 'nature', new_nature)
-
+ 
     # Random IVs (all between 0-31)
     iv_hash = get_attr(poke, 'iv') or RubyHash()
     for stat in _PBS_STAT_ORDER:
         iv_hash[RubySymbol(stat)] = random.randint(0, 31)
     set_attr(poke, 'iv', iv_hash)
-
+ 
     # Random ability from PBS
     if pdata:
         all_abilities = []
@@ -1261,7 +1277,7 @@ def randomize_pokemon_stats(poke, player=None):
         if all_abilities:
             new_ability = RubySymbol(random.choice(all_abilities))
             set_attr(poke, 'ability', new_ability)
-
+ 
     # Recalculate stats
     if pdata:
         raw_stats = [int(x.strip()) for x in pdata.get('BaseStats','50,50,50,50,50,50').split(',')]
@@ -1283,17 +1299,17 @@ def randomize_pokemon_stats(poke, player=None):
         set_attr(poke, 'attack',  atk); set_attr(poke, 'defense', def_)
         set_attr(poke, 'spatk',   spatk); set_attr(poke, 'spdef', spdef)
         set_attr(poke, 'speed',   speed)
-
+ 
     print(f"  [OK] Stats/habilidad randomizados para {species}")
     print(f"       Naturaleza: {new_nature}  Habilidad: {get_attr(poke,'ability')}")
     iv_h = get_attr(poke, 'iv')
     if isinstance(iv_h, RubyHash):
         vals = '/'.join(str(iv_h.get(s, 0)) for s in ('HP','ATTACK','DEFENSE','SPECIAL_ATTACK','SPECIAL_DEFENSE','SPEED'))
         print(f"       IVs: {vals}")
-
-
+ 
+ 
 # ─── Equipo de torneo ────────────────────────────────────────────────────────
-
+ 
 def get_eligible_tournament_pokemon():
     """Especies aptas: completamente evolucionadas, sin legendarios ni míticos."""
     db = _load_pbs(PBS_PATH)
@@ -1308,7 +1324,7 @@ def get_eligible_tournament_pokemon():
             continue
         eligible.append(species)
     return eligible
-
+ 
 def _tournament_evs(base_dict):
     """252 en stat ofensiva principal + 252 en SPEED + 4 en HP."""
     primary = 'ATTACK' if base_dict.get('ATTACK', 0) >= base_dict.get('SPECIAL_ATTACK', 0) \
@@ -1320,7 +1336,7 @@ def _tournament_evs(base_dict):
     ev_hash[RubySymbol('SPEED')] = 252
     ev_hash[RubySymbol('HP')]    = 4
     return ev_hash
-
+ 
 def _tournament_moves(pdata, count=4):
     """Hasta 4 movimientos aleatorios del learnset (nivel-up + tutor)."""
     import random
@@ -1351,7 +1367,7 @@ def _tournament_moves(pdata, count=4):
     if not pool:
         return ['TACKLE']
     return random.sample(pool, min(count, len(pool)))
-
+ 
 def generate_tournament_team(party, player_obj):
     """Genera un equipo de torneo de 6 Pokémon aleatorios y reemplaza el equipo."""
     import random
@@ -1359,7 +1375,7 @@ def generate_tournament_team(party, player_obj):
     if len(eligible) < 6:
         print(f"[ERR] Solo hay {len(eligible)} especies elegibles (se necesitan 6)")
         return False
-
+ 
     chosen = random.sample(eligible, 6)
     new_party = []
     print()
@@ -1380,26 +1396,26 @@ def generate_tournament_team(party, player_obj):
                             player_obj=player_obj)
         new_party.append(poke)
         print(f"  + {species:<22} {nature:<12} [{ability or '?'}]  {', '.join(move_ids)}")
-
+ 
     party[:] = new_party
     print(f"\n  [OK] Equipo de torneo generado con {len(new_party)} Pokémon")
     return True
-
-
+ 
+ 
 def submenus_add_pokemon(party, player):
     """Submenú interactivo para agregar Pokémon."""
     import random
-
+ 
     print("\n  ── AGREGAR POKEMON ──")
     print("  a. Elegir especie manualmente")
     print("  b. Pokemon aleatorio")
     print("  c. Llenar equipo con 5 randoms")
     print("  v. Volver")
     sub = input("  > ").strip().lower()
-
+ 
     if sub == 'v':
         return False
-
+ 
     if sub == 'b' or sub == 'c':
         all_species = get_all_species()
         count = 5 - len(party) if sub == 'c' else 1
@@ -1415,7 +1431,7 @@ def submenus_add_pokemon(party, player):
             if ok:
                 modified = True
         return modified
-
+ 
     if sub == 'a':
         species = input("  Especie (ej: PIKACHU): ").strip().upper()
         if not get_pokemon_data(species):
@@ -1435,13 +1451,13 @@ def submenus_add_pokemon(party, player):
         except (ValueError, TypeError) as e:
             print(f"  [ERR] {e}")
             return False
-
+ 
     print("  Opción no válida")
     return False
-
-
+ 
+ 
 # ─── Interfaz de usuario ─────────────────────────────────────────────────────
-
+ 
 def main():
     import sys
     if hasattr(sys.stdout, 'reconfigure'):
@@ -1452,17 +1468,17 @@ def main():
     print("=" * 60)
     print(" POKEMON ANIL - EDITOR DE PARTIDA GUARDADA")
     print("=" * 60)
-
+ 
     # Buscar saves en saves/
     if not os.path.isdir(SAVES_IN_DIR):
         os.makedirs(SAVES_IN_DIR)
     candidates = [f for f in os.listdir(SAVES_IN_DIR) if f.lower().endswith('.rxdata')]
-
+ 
     if not candidates:
         print(f"[ERR] Pon el archivo .rxdata en:\n  {SAVES_IN_DIR}")
         print("Luego vuelve a ejecutar el editor.")
         return
-
+ 
     if len(candidates) == 1:
         save_filename = candidates[0]
     else:
@@ -1475,14 +1491,14 @@ def main():
         except (ValueError, IndexError):
             print("[ERR] Selección inválida.")
             return
-
+ 
     SAVE_PATH = os.path.join(SAVES_IN_DIR, save_filename)
     os.makedirs(SAVES_OUT_DIR, exist_ok=True)
     OUTPUT_PATH = os.path.join(SAVES_OUT_DIR, save_filename)
-
+ 
     print(f"Leyendo  : {SAVE_PATH}")
     print(f"Guardando: {OUTPUT_PATH}")
-
+ 
     print("\nCargando partida...")
     try:
         save_data = load_save(SAVE_PATH)
@@ -1490,17 +1506,17 @@ def main():
         print(f"Error al cargar: {e}")
         import traceback; traceback.print_exc()
         return
-
+ 
     print("[OK] Partida cargada correctamente")
-
+ 
     player = find_player(save_data)
     party  = find_party(save_data)
     bag    = find_bag(save_data)
-
+ 
     show_player_info(player)
     show_party(party)
     show_bag(bag)
-
+ 
     print("\n" + "=" * 60)
     print(" ¿QUÉ DESEAS MODIFICAR?")
     print("=" * 60)
@@ -1514,14 +1530,15 @@ def main():
     print("  8. Eliminar Pokémon del equipo")
     print("  9. Randomizar stats/habilidad de un Pokémon")
     print(" 10. Generar equipo de torneo  (6 Pokémon aleatorios, sin legendarios ni pseudo)")
+    print(" 11. Cambiar nombre del entrenador")
     print("  0. Guardar y salir")
     print("  Q. Salir sin guardar")
-
+ 
     modified = False
-
+ 
     while True:
         choice = input("\n> ").strip()
-
+ 
         if choice == '0':
             if modified:
                 save_bytes = dump_save(save_data, OUTPUT_PATH)
@@ -1533,11 +1550,11 @@ def main():
             else:
                 print("Sin cambios.")
             break
-
+ 
         elif choice.upper() == 'Q':
             print("Saliendo sin guardar.")
             break
-
+ 
         elif choice == '1':
             current = get_attr(player, 'money') if player else 0
             print(f"Dinero actual: ${current:,}")
@@ -1547,7 +1564,7 @@ def main():
                 modified = True
             except ValueError:
                 print("Valor inválido")
-
+ 
         elif choice == '2':
             show_party(party)
             idx = input("Índice del Pokémon (0-5): ").strip()
@@ -1557,7 +1574,7 @@ def main():
                 modified = True
             except (ValueError, TypeError):
                 print("Valor inválido")
-
+ 
         elif choice == '3':
             current_badges = get_attr(player, 'badges')
             earned = sum(1 for b in current_badges if b) if isinstance(current_badges, list) else '?'
@@ -1568,7 +1585,7 @@ def main():
                 modified = True
             except (ValueError, TypeError):
                 print("Valor inválido")
-
+ 
         elif choice == '4':
             item = input("Nombre del ítem (ej: POTION, MASTERBALL): ").strip()
             qty  = input("Cantidad: ").strip()
@@ -1577,7 +1594,7 @@ def main():
                 modified = True
             except (ValueError, TypeError):
                 print("Valor inválido")
-
+ 
         elif choice == '5':
             show_party(party)
             idx = input("Índice del Pokémon: ").strip()
@@ -1591,7 +1608,7 @@ def main():
                     print(f"  {poke!r}")
             except (ValueError, IndexError, TypeError):
                 print("Índice inválido")
-
+ 
         elif choice == '6':
             show_party(party)
             idx = input("Índice del Pokémon: ").strip()
@@ -1604,7 +1621,7 @@ def main():
                 modified = True
             except (ValueError, IndexError, TypeError) as e:
                 print(f"Error: {e}")
-
+ 
         elif choice == '7':
             if len(party) >= 6:
                 print("  [ERR] El equipo ya está lleno (6/6)")
@@ -1613,7 +1630,7 @@ def main():
                 if ok:
                     modified = True
                     show_party(party)
-
+ 
         elif choice == '8':
             show_party(party)
             if not party:
@@ -1632,7 +1649,7 @@ def main():
                         print("  Índice fuera de rango")
                 except (ValueError, TypeError):
                     print("  Valor inválido")
-
+ 
         elif choice == '9':
             show_party(party)
             if not party:
@@ -1655,7 +1672,7 @@ def main():
                             print("  Índice fuera de rango")
                     except (ValueError, TypeError):
                         print("  Valor inválido")
-
+ 
         elif choice == '10':
             print("\n  ADVERTENCIA: esto reemplazará TODO el equipo actual.")
             confirm = input("  ¿Continuar? (s/n): ").strip().lower()
@@ -1664,10 +1681,21 @@ def main():
                 if ok:
                     modified = True
                     show_party(party)
-
+ 
+        elif choice == '11':
+            current_name = get_attr(player, 'name') or get_attr(player, 'playername') or '?'
+            print(f"  Nombre actual: {current_name}")
+            new_name = input("  Nuevo nombre del entrenador: ").strip()
+            if new_name:
+                ok = edit_trainer_name(player, new_name)
+                if ok:
+                    modified = True
+            else:
+                print("  [ERR] El nombre no puede estar vacío")
+ 
         else:
             print("Opción no válida")
-
-
+ 
+ 
 if __name__ == '__main__':
     main()
