@@ -998,6 +998,28 @@ def get_pokemon_data(species):
     db = _load_pbs(PBS_PATH)
     return db.get(species.upper())
  
+# ─── Género ──────────────────────────────────────────────────────────────────
+
+_GENDER_RATIO_MAP = {
+    'ALWAYSMALE':   [0],
+    'ALWAYSFEMALE': [1],
+    'GENDERLESS':   [2],
+}
+_GENDER_LABELS = {0: 'Macho', 1: 'Hembra', 2: 'Sin género'}
+
+def get_valid_genders(species):
+    """Retorna géneros válidos para la especie: 0=Macho, 1=Hembra, 2=Sin género."""
+    pdata = get_pokemon_data(species)
+    if not pdata:
+        return [0, 1]
+    ratio = pdata.get('GenderRatio', '').strip().upper()
+    return _GENDER_RATIO_MAP.get(ratio, [0, 1])
+
+def default_gender(species):
+    """Retorna el primer género válido de la especie."""
+    return get_valid_genders(species)[0]
+
+
 def get_move_pp(move_id):
     """Retorna el PP base de un movimiento."""
     db = _load_pbs(MOVES_PBS_PATH)
@@ -1022,7 +1044,33 @@ _NATURES = {
     'CALM': ('SPECIAL_DEFENSE', 'ATTACK'), 'GENTLE': ('SPECIAL_DEFENSE', 'DEFENSE'),
     'SASSY': ('SPECIAL_DEFENSE', 'SPEED'), 'CAREFUL': ('SPECIAL_DEFENSE', 'SPECIAL_ATTACK'),
 }
- 
+
+# ─── Lista única de Pokémon baneados del torneo ───────────────────────────────
+# Incluye legendarios, míticos y casos especiales (Slaking, etc.)
+BANNED_POKEMON = {
+    # Legendarios
+    'ARTICUNO', 'AZELF', 'CALYREX', 'CHIYU', 'CHIENPAO', 'COBALION',
+    'COSMOEM', 'COSMOG', 'CRESSELIA', 'TYPENULL', 'DIALGA', 'ENAMORUS',
+    'ENTEI', 'ETERNATUS', 'FEZANDIPITI', 'GIRATINA', 'GLASTRIER',
+    'GROUDON', 'HEATRAN', 'HOOH', 'KORAIDON', 'KUBFU', 'KYOGRE',
+    'KYUREM', 'LANDORUS', 'LATIAS', 'LATIOS', 'LUGIA', 'LUNALA',
+    'MESPRIT', 'MEWTWO', 'MIRAIDON', 'MOLTRES', 'MUNKIDORI', 'NECROZMA',
+    'OGERPON', 'OKIDOGI', 'PALKIA', 'RAIKOU', 'RAYQUAZA', 'REGICE',
+    'REGIDRAGO', 'REGIELEKI', 'REGIGIGAS', 'REGIROCK', 'REGISTEEL',
+    'RESHIRAM', 'SILVALLY', 'SOLGALEO', 'SPECTRIER', 'SUICUNE',
+    'TAPUBULU', 'TAPUFINI', 'TAPUKOKO', 'TAPULELE', 'TERAPAGOS',
+    'TERRAKION', 'THUNDURUS', 'TINGLU', 'TORNADUS', 'URSHIFU', 'UXIE',
+    'VIRIZION', 'WOCHIEN', 'XERNEAS', 'YVELTAL', 'ZACIAN', 'ZAMAZENTA',
+    'ZAPDOS', 'ZEKROM', 'ZYGARDE',
+    # Míticos
+    'ARCEUS', 'CELEBI', 'DARKRAI', 'DEOXYS', 'DIANCIE', 'GENESECT',
+    'HOOPA', 'JIRACHI', 'KELDEO', 'MAGEARNA', 'MANAPHY', 'MARSHADOW',
+    'MELMETAL', 'MELOETTA', 'MELTAN', 'MEW', 'PECHARUNT', 'PHIONE',
+    'SHAYMIN', 'VICTINI', 'VOLCANION', 'ZARUDE', 'ZERAORA',
+    # Baneados especiales
+    'SLAKING',
+}
+
 def calc_stat(base, level, iv=31, ev=0, nature_mod=1.0, is_hp=False):
     ev_contribution = ev // 4
     if is_hp:
@@ -1074,7 +1122,7 @@ def make_move(move_id):
     return m
  
 def make_pokemon(species, level, nature='HARDY', shiny=False, ivs_all31=True,
-                 player_obj=None, ability=None, move_ids=None, evs=None):
+                 player_obj=None, ability=None, move_ids=None, evs=None, gender=None):
     """Crea un objeto Pokemon completo listo para agregar al equipo."""
     import random, time
  
@@ -1173,7 +1221,7 @@ def make_pokemon(species, level, nature='HARDY', shiny=False, ivs_all31=True,
     a['@steps_to_hatch']   = 0
     a['@status']           = RubySymbol('NONE')
     a['@statusCount']      = 0
-    a['@gender']           = 0
+    a['@gender']           = gender if gender is not None else default_gender(species)
     a['@shiny']            = shiny
     a['@ability_index']    = None
     a['@ability']          = ability_sym
@@ -1229,12 +1277,12 @@ def make_pokemon(species, level, nature='HARDY', shiny=False, ivs_all31=True,
  
  
 def add_pokemon_to_party(party, player, species, level, nature='HARDY',
-                         shiny=False, ivs_all31=True):
+                         shiny=False, ivs_all31=True, gender=None):
     if len(party) >= 6:
         print("  [ERR] El equipo ya tiene 6 Pokémon")
         return False
     try:
-        poke = make_pokemon(species, level, nature, shiny, ivs_all31, player)
+        poke = make_pokemon(species, level, nature, shiny, ivs_all31, player, gender=gender)
     except ValueError as e:
         print(f"  [ERR] {e}")
         return False
@@ -1311,14 +1359,13 @@ def randomize_pokemon_stats(poke, player=None):
 # ─── Equipo de torneo ────────────────────────────────────────────────────────
  
 def get_eligible_tournament_pokemon():
-    """Especies aptas: completamente evolucionadas, sin legendarios ni míticos."""
+    """Especies aptas: completamente evolucionadas y no baneadas."""
     db = _load_pbs(PBS_PATH)
     eligible = []
     for species, data in db.items():
         if data.get('Evolutions', '').strip():          # tiene evolución → no es final
             continue
-        flags = data.get('Flags', '').lower()
-        if 'legendary' in flags or 'mythical' in flags:
+        if species in BANNED_POKEMON:
             continue
         if not data.get('BaseStats', '').strip():
             continue
@@ -1326,15 +1373,21 @@ def get_eligible_tournament_pokemon():
     return eligible
  
 def _tournament_evs(base_dict):
-    """252 en stat ofensiva principal + 252 en SPEED + 4 en HP."""
+    """252 en stat ofensiva principal + 252 en SPEED (o stat defensiva si Speed ≤ 60) + 4 en HP."""
     primary = 'ATTACK' if base_dict.get('ATTACK', 0) >= base_dict.get('SPECIAL_ATTACK', 0) \
               else 'SPECIAL_ATTACK'
+    # Pokémon lentos (base Speed ≤ 60): invertir los EVs de Speed a la mejor defensa
+    if base_dict.get('SPEED', 0) <= 60:
+        secondary = 'DEFENSE' if base_dict.get('DEFENSE', 0) >= base_dict.get('SPECIAL_DEFENSE', 0) \
+                    else 'SPECIAL_DEFENSE'
+    else:
+        secondary = 'SPEED'
     ev_hash = RubyHash()
     for stat in _PBS_STAT_ORDER:
         ev_hash[RubySymbol(stat)] = 0
-    ev_hash[RubySymbol(primary)] = 252
-    ev_hash[RubySymbol('SPEED')] = 252
-    ev_hash[RubySymbol('HP')]    = 4
+    ev_hash[RubySymbol(primary)]   = 252
+    ev_hash[RubySymbol(secondary)] = 252
+    ev_hash[RubySymbol('HP')]      = 4
     return ev_hash
  
 def _tournament_moves(pdata, count=4):
@@ -1375,11 +1428,15 @@ def generate_tournament_team(party, player_obj):
     if len(eligible) < 6:
         print(f"[ERR] Solo hay {len(eligible)} especies elegibles (se necesitan 6)")
         return False
- 
+
+    # Pool de ítems: todos los del ITEM_POCKET_MAP, sin repetir en el equipo
+    item_pool = [item for pocket in ITEM_POCKET_MAP.values() for item in pocket]
+    chosen_items = random.sample(item_pool, min(6, len(item_pool)))
+
     chosen = random.sample(eligible, 6)
     new_party = []
     print()
-    for species in chosen:
+    for idx, species in enumerate(chosen):
         pdata = get_pokemon_data(species)
         if not pdata:
             continue
@@ -1391,12 +1448,16 @@ def generate_tournament_team(party, player_obj):
         raw_stats = [int(x.strip()) for x in pdata.get('BaseStats', '50,50,50,50,50,50').split(',')]
         base = dict(zip(_PBS_STAT_ORDER, raw_stats))
         evs = _tournament_evs(base)
+        item = chosen_items[idx] if idx < len(chosen_items) else None
         poke = make_pokemon(species, level=100, nature=nature, ivs_all31=True,
                             ability=ability, move_ids=move_ids, evs=evs,
                             player_obj=player_obj)
+        if item:
+            poke.attributes['@item'] = RubySymbol(item)
         new_party.append(poke)
-        print(f"  + {species:<22} {nature:<12} [{ability or '?'}]  {', '.join(move_ids)}")
- 
+        item_str = f"  @{item}" if item else ''
+        print(f"  + {species:<22} {nature:<12} [{ability or '?'}]{item_str}  {', '.join(move_ids)}")
+
     party[:] = new_party
     print(f"\n  [OK] Equipo de torneo generado con {len(new_party)} Pokémon")
     return True
@@ -1437,6 +1498,21 @@ def submenus_add_pokemon(party, player):
         if not get_pokemon_data(species):
             print(f"  [ERR] Especie '{species}' no encontrada")
             return False
+        # Género
+        valid_genders = get_valid_genders(species)
+        if len(valid_genders) > 1:
+            opts = ', '.join(f"{g}={_GENDER_LABELS[g]}" for g in valid_genders)
+            g_str = input(f"  Género ({opts}): ").strip()
+            try:
+                chosen_gender = int(g_str)
+                if chosen_gender not in valid_genders:
+                    print(f"  [WARN] Género inválido, usando {_GENDER_LABELS[valid_genders[0]]}")
+                    chosen_gender = valid_genders[0]
+            except ValueError:
+                chosen_gender = valid_genders[0]
+        else:
+            chosen_gender = valid_genders[0]
+            print(f"  Género fijo: {_GENDER_LABELS[chosen_gender]}")
         level   = input("  Nivel (1-100): ").strip()
         print("  Naturalezas: HARDY LONELY BRAVE ADAMANT NAUGHTY BOLD RELAXED IMPISH LAX")
         print("               TIMID HASTY JOLLY NAIVE MODEST MILD QUIET RASH CALM GENTLE SASSY CAREFUL")
@@ -1447,7 +1523,7 @@ def submenus_add_pokemon(party, player):
         ivs_all31 = ivs_s != '2'
         try:
             return add_pokemon_to_party(party, player, species, int(level),
-                                        nature, shiny, ivs_all31)
+                                        nature, shiny, ivs_all31, gender=chosen_gender)
         except (ValueError, TypeError) as e:
             print(f"  [ERR] {e}")
             return False
@@ -1525,11 +1601,11 @@ def main():
     print("  3. Medallas")
     print("  4. Agregar ítem a la bolsa")
     print("  5. Mostrar todos los atributos de un Pokémon")
-    print("  6. Modificar atributo específico de un Pokémon")
+    print("  6. Modificar atributo específico de un Pokémon  (incl. género)")
     print("  7. Agregar Pokémon al equipo  (manual / aleatorio)")
     print("  8. Eliminar Pokémon del equipo")
     print("  9. Randomizar stats/habilidad de un Pokémon")
-    print(" 10. Generar equipo de torneo  (6 Pokémon aleatorios, sin legendarios ni pseudo)")
+    print(" 10. Generar equipo de torneo  (6 Pokémon aleatorios, con ítems, sin baneados)")
     print(" 11. Cambiar nombre del entrenador")
     print("  0. Guardar y salir")
     print("  Q. Salir sin guardar")
@@ -1612,13 +1688,27 @@ def main():
         elif choice == '6':
             show_party(party)
             idx = input("Índice del Pokémon: ").strip()
-            attr = input("Nombre del atributo (sin @, ej: level, hp, totalhp): ").strip()
-            val  = input("Nuevo valor (número): ").strip()
+            attr = input("Nombre del atributo (sin @, ej: level, hp, gender): ").strip()
             try:
                 poke = party[int(idx)]
-                set_attr(poke, attr, int(val))
-                print(f"  [OK] {attr} = {val}")
-                modified = True
+                if attr.lower() == 'gender':
+                    species = str(get_attr(poke, 'species') or '')
+                    valid = get_valid_genders(species)
+                    opts = ', '.join(f"{g}={_GENDER_LABELS[g]}" for g in valid)
+                    print(f"  Géneros válidos para {species or '?'}: {opts}")
+                    val = input("  Género: ").strip()
+                    g = int(val)
+                    if g not in valid:
+                        print(f"  [ERR] Género {g} no válido para {species} (válidos: {valid})")
+                    else:
+                        set_attr(poke, 'gender', g)
+                        print(f"  [OK] gender = {g} ({_GENDER_LABELS[g]})")
+                        modified = True
+                else:
+                    val = input("Nuevo valor (número): ").strip()
+                    set_attr(poke, attr, int(val))
+                    print(f"  [OK] {attr} = {val}")
+                    modified = True
             except (ValueError, IndexError, TypeError) as e:
                 print(f"Error: {e}")
  
