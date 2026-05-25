@@ -1060,6 +1060,16 @@ _NATURES = {
     'SASSY': ('SPECIAL_DEFENSE', 'SPEED'), 'CAREFUL': ('SPECIAL_DEFENSE', 'SPECIAL_ATTACK'),
 }
 
+# ─── Movimientos baneados del torneo ─────────────────────────────────────────
+BANNED_MOVES = {
+    # 1 Shot Kill
+    'GUILLOTINE', 'HORNDRILL', 'FISSURE', 'SHEERCOLD',
+    # Relevo (pasa boosts al siguiente)
+    'BATONPASS',
+    # Subida de evasión propia
+    'DOUBLETEAM', 'MINIMIZE',
+}
+
 # ─── Lista única de Pokémon baneados del torneo ───────────────────────────────
 # Incluye legendarios, míticos y casos especiales (Slaking, etc.)
 BANNED_POKEMON = {
@@ -1090,15 +1100,34 @@ BANNED_POKEMON = {
 TOURNAMENT_ITEMS = [
     # Held items ofensivos
     'CHOICEBAND', 'CHOICESPECS', 'CHOICESCARF', 'LIFEORB',
-    'EXPERTBELT', 'WISEGLASSES', 'MUSCLEBAND',
-    # Supervivencia
-    'FOCUSSASH', 'ROCKYHELMET', 'EVIOLITE',
-    # Recuperación
+    'EXPERTBELT', 'WISEGLASSES', 'MUSCLEBAND', 'THROATSPRAY',
+    'METRONOME',
+    # Supervivencia / utilidad defensiva
+    'FOCUSSASH', 'ROCKYHELMET', 'EVIOLITE', 'HEAVYDUTYBOOTS',
+    'ASSAULTVEST', 'AIRBALLOON', 'CLEARAMULET', 'COVERTCLOAK',
+    'SHEDSHELL', 'EJECTBUTTON', 'EJECTPACK', 'REDCARD',
+    # Orbes de estado (Guts, Toxic Boost, etc.)
+    'TOXICORB', 'FLAMEORB',
+    # Recuperación / sustain
     'LEFTOVERS', 'BLACKSLUDGE', 'SHELLBELL',
-    # Bayas
-    'LUMBERRY', 'SITRUSBERRY', 'ORANBERRY',
+    # Booster (paradoja)
+    'BOOSTERENERGY',
+    # Seeds de terreno
+    'TERRAINEXTENDER', 'MISTYSEED', 'ELECTRICSEED', 'GRASSYSEED', 'PSYCHICSEED',
+    # Hierbas
+    'POWERHERB', 'WHITEHERB', 'MENTALHERB',
+    # Bayas de curación
+    'LUMBERRY', 'SITRUSBERRY',
+    'WIKIBERRY', 'AGUAVBERRY', 'IAPAPABERRY', 'MAGOBERRY', 'FIGYBERRY',
+    # Bayas de boost de stat
+    'PETAYABERRY', 'SALACBERRY', 'LIECHIBERRY', 'CUSTAPBERRY',
+    'MICLEBERRY', 'JABOCABERRY', 'ENIGMABERRY', 'KEEBERRY', 'MARANGABERRY',
+    # Bayas de resistencia de tipo
+    'CHOPLEBERRY', 'OCCABERRY', 'PASSHOBERRY', 'WACANBERRY', 'RINDOBERRY',
+    'YACHEBERRY', 'COBABERRY', 'CHARTIBERRY', 'KASIBBERRY', 'HABANBERRY',
+    'COLBURBERRY', 'BABIRIBERRY', 'CHILANBERRY', 'TANGABERRY', 'SHUCABERRY',
     # Otros útiles en combate
-    'ASSAULTVEST', 'AIRBALLOON', 'SCOPELENS', 'LOADEDDICE',
+    'SCOPELENS', 'LOADEDDICE', 'DESTINYKNOT',
 ]
 
 def calc_stat(base, level, iv=31, ev=0, nature_mod=1.0, is_hp=False):
@@ -1388,6 +1417,39 @@ def randomize_pokemon_stats(poke, player=None):
  
 # ─── Equipo de torneo ────────────────────────────────────────────────────────
  
+_ALL_MOVES_POOL_CACHE = None
+
+def _get_all_moves_pool():
+    """Todos los movimientos de moves.txt excepto los baneados. Cacheado."""
+    global _ALL_MOVES_POOL_CACHE
+    if _ALL_MOVES_POOL_CACHE is not None:
+        return _ALL_MOVES_POOL_CACHE
+    db = _load_pbs(MOVES_PBS_PATH)
+    _ALL_MOVES_POOL_CACHE = [mid for mid in db.keys() if mid not in BANNED_MOVES]
+    return _ALL_MOVES_POOL_CACHE
+
+
+_ALL_ABILITIES_POOL_CACHE = None
+
+def _get_all_abilities_pool():
+    """Todas las habilidades únicas de todos los Pokémon del PBS. Cacheado."""
+    global _ALL_ABILITIES_POOL_CACHE
+    if _ALL_ABILITIES_POOL_CACHE is not None:
+        return _ALL_ABILITIES_POOL_CACHE
+    db = _load_pbs(PBS_PATH)
+    abilities = set()
+    for pdata in db.values():
+        for key in ('Abilities', 'HiddenAbilities'):
+            raw = pdata.get(key, '')
+            if raw:
+                for a in raw.split(','):
+                    a = a.strip().upper()
+                    if a:
+                        abilities.add(a)
+    _ALL_ABILITIES_POOL_CACHE = sorted(abilities)
+    return _ALL_ABILITIES_POOL_CACHE
+
+
 def get_eligible_tournament_pokemon():
     """Especies aptas: completamente evolucionadas y no baneadas."""
     db = _load_pbs(PBS_PATH)
@@ -1421,32 +1483,9 @@ def _tournament_evs(base_dict):
     return ev_hash
  
 def _tournament_moves(pdata, count=4):
-    """Hasta 4 movimientos aleatorios del learnset (nivel-up + tutor)."""
+    """4 movimientos aleatorios de TODOS los disponibles en moves.txt (sin baneados)."""
     import random
-    moves_db = _load_pbs(MOVES_PBS_PATH)
-    pool = []
-    for part_key in ('Moves', 'TutorMoves'):
-        raw = pdata.get(part_key, '')
-        if not raw:
-            continue
-        parts = [p.strip() for p in raw.split(',')]
-        if part_key == 'Moves':
-            i = 0
-            while i + 1 < len(parts):
-                try:
-                    int(parts[i])
-                    mv = parts[i + 1].upper()
-                    if mv in moves_db:
-                        pool.append(mv)
-                except (ValueError, IndexError):
-                    pass
-                i += 2
-        else:
-            for mv in parts:
-                mv = mv.upper()
-                if mv and mv in moves_db:
-                    pool.append(mv)
-    pool = list(dict.fromkeys(pool))  # deduplicar
+    pool = _get_all_moves_pool()
     if not pool:
         return ['TACKLE']
     return random.sample(pool, min(count, len(pool)))
@@ -1470,8 +1509,7 @@ def generate_tournament_team(party, player_obj):
         if not pdata:
             continue
         nature = random.choice(list(_NATURES.keys()))
-        all_abilities = [a.strip() for a in pdata.get('Abilities', '').split(',') if a.strip()]
-        all_abilities += [a.strip() for a in pdata.get('HiddenAbilities', '').split(',') if a.strip()]
+        all_abilities = _get_all_abilities_pool()
         ability = random.choice(all_abilities) if all_abilities else None
         move_ids = _tournament_moves(pdata, 4)
         raw_stats = [int(x.strip()) for x in pdata.get('BaseStats', '50,50,50,50,50,50').split(',')]
